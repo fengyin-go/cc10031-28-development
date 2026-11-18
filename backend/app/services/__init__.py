@@ -27,6 +27,8 @@ from app.services.report_dashboard import ReportDashboardService
 from app.services.task_queue import TaskQueueService
 from app.services.runtime_session import RuntimeSessionService, runtime_session
 from app.services.callback_hook import CallbackHookService, callback_hook
+from app.services.processing_snake import ProcessingSnakeService, processing_snake
+from app.services.proxy_switch import ProxySwitchService, proxy_switch
 from app.services.pipeline import (  # noqa: F401
     run_all_pipelines,
     pipeline_rpa_lifecycle,

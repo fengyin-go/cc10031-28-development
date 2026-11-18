@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import ROUTERS
 from app.store import store
-from app.services import runtime_session, callback_hook
+from app.services import runtime_session, callback_hook, processing_snake, proxy_switch
 
 app = FastAPI(title="RPA流程自动化中心", version="1.0.0")
 
@@ -22,6 +22,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def bootstrap_proxy_switch_demo() -> None:
+    """预置一条可审批的代理切换演示计划（幂等，已有计划时跳过）。"""
+    from app.services.proxy_switch import bootstrap_demo_switch_data
+
+    bootstrap_demo_switch_data()
+
 
 @app.get("/api/health")
 def health() -> dict[str, object]:
@@ -59,6 +67,8 @@ def nodestats(module: str | None = Query(default=None)) -> dict[str, object]:
     # 附加非模块服务
     snapshots["runtime_session"] = runtime_session.domain_snapshot()
     snapshots["callback_hook"] = callback_hook.domain_snapshot()
+    snapshots["processing_snake"] = processing_snake.domain_snapshot()
+    snapshots["proxy_switch"] = proxy_switch.domain_snapshot()
 
     # 存储基础设施概览
     infra = {

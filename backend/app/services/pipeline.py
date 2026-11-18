@@ -354,7 +354,7 @@ def pipeline_proxy_anti_block(proxy_id: int | None = None) -> PipelineResult:
             result.wait_required = True
     result.data["rater_active"] = sum(1 for r in raters if r.get("status") == "已生效")
 
-    # 3) 反封锁
+    # 3) 反封锁：封锁触发只标记「需要切换」，切换计划由代理切换能力生成
     blocks = store.rows("anti_block")
     if not blocks:
         result.add_error("无反封锁策略")
@@ -364,10 +364,41 @@ def pipeline_proxy_anti_block(proxy_id: int | None = None) -> PipelineResult:
         result.add_step("anti_block", ab)
         if ab.get("status") == "触发封锁":
             vault.isolate(ab, "已触发封锁", "anti_block")
+            # 反封锁只标记需要切换；生成带流程归属、可审批的代理切换计划
+            ab.setdefault("proxy_switch_marker", {
+                "needed": True, "state": "待生成切换计划",
+                "plan_id": None, "plan_no": None, "owner_flow": None,
+                "snake_version": None, "updated_at": None,
+            })
             if result.data["proxy_online"] > 1:
                 result.data["proxy_switch_needed"] = True
     result.data["block_active"] = sum(1 for b in blocks if b.get("status") == "已启用")
     result.data["block_triggered"] = sum(1 for b in blocks if b.get("status") == "触发封锁")
+
+    # 4) 为触发封锁的策略生成可审批代理切换计划（按首个可用流程归属）
+    #    同一节点已有活动计划时服务会拒绝重复创建，保证节点级唯一活动计划。
+    if result.data.get("proxy_switch_needed"):
+        from app.services.proxy_switch import proxy_switch
+        owners = [
+            str(row.get("流程名称")) for row in store.rows("bot_definition")
+            if row.get("流程名称")
+        ]
+        owner = owners[0] if owners else "默认采集流程"
+        created_plans: list[dict[str, Any]] = []
+        for ab in blocks:
+            if ab.get("status") != "触发封锁":
+                continue
+            try:
+                plan = proxy_switch.create_plan(
+                    int(ab["id"]), owner,
+                    switch_mode="先切主并观察备",
+                    source="pipeline_proxy_anti_block",
+                )
+                created_plans.append({"plan_id": plan["id"], "plan_no": plan["plan_no"]})
+            except ValueError:
+                # 节点已被其他活动计划占用：跳过，保持同一节点只有一个活动计划
+                continue
+        result.data["proxy_switch_plans"] = created_plans
 
     result.dirty = vault.list_all()
     return result

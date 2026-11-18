@@ -20,6 +20,36 @@ class AntiBlockService(BaseModuleService):
     ACTION_RULES = {"启用策略": "草稿", "停用策略": "已启用"}
     NEGATIVE_ACTIONS = ["停用策略"]
 
+    def trigger_block(self, entry_id: int) -> tuple[dict[str, Any] | None, str]:
+        """封锁触发：只把策略标记为「触发封锁 + 需要代理切换」，不直接动节点。
+
+        反封锁模块不生成切换计划、不改节点池；计划由代理切换能力按
+        所属采集流程生成并审批，处理结果再回写 proxy_switch_marker。
+        """
+        entry = store.find(self.MODULE, entry_id)
+        if entry is None:
+            return None, f"{self.ENTITY} {entry_id} 不存在或已归档"
+        entry["status"] = "触发封锁"
+        entry["pending"] = True
+        entry["abnormal"] = True
+        entry["proxy_switch_marker"] = {
+            "needed": True,
+            "state": "待生成切换计划",
+            "plan_id": None,
+            "plan_no": None,
+            "owner_flow": None,
+            "snake_version": None,
+            "updated_at": None,
+        }
+        return entry, "封锁已触发，仅标记需要代理切换，等待生成可审批切换计划"
+
+    def get_switch_marker(self, entry_id: int) -> dict[str, Any] | None:
+        """读取策略上的代理切换标记（只读）。"""
+        entry = store.find(self.MODULE, entry_id)
+        if entry is None:
+            return None
+        return entry.get("proxy_switch_marker")
+
     def get_site_protection(self, site: str) -> dict[str, Any]:
         """查询指定站点的反封锁策略覆盖情况。"""
         rows = store.rows(self.MODULE)

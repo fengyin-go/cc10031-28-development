@@ -79,5 +79,45 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 代理切换数据能力（反封锁联动）
+
+反封锁触发后只标记「需要代理切换」，不直接改节点池；可审批的代理切换计划由
+独立的跨模块能力生成与管理，代码在 `backend/app/services/proxy_switch.py`，
+链路底稿在 `backend/app/services/processing_snake.py`，专用路由在
+`backend/app/routers/proxy_switch.py`，前端入口为「代理切换工作台」
+（路由 `/proxy-workbench`）。
+
+核心口径：
+
+- **三源只读消费**：代理节点 `proxy_router`、频控规则 `rate_limiter`、
+  新到达的防护策略 `anti_block`；解析封锁事件影响的地域与节点主备归属。
+- **计划与流程归属同时写入**：`owner_flow` 是所属采集流程，只有它能确认/撤销，
+  其他流程调写操作返回 403，只能只读查看节点归属和回执。
+- **同一节点同一时间只能有一个活动（待确认）计划**：创建前整体校验，
+  任一节点冲突则整单不落地；终态（已确认/已撤销）后节点占用自动释放。
+- **两种主备口径**：`主备一起切换` 或 `先切主并观察备`，两种口径下同一节点
+  都只会出现在至多一个活动计划里。
+- **处理项蛇（受控只读）**：处理项导入即定稿、重复导入只认第一条；链路串联带
+  版本号并联动待办；切换计划、结果明细按蛇版本落印；提供业务记录与结果明细对账。
+  对外只暴露查询口径，无通用更新/删除接口。
+- **确认留痕**：所属流程确认时按处理项蛇版本更新防护策略 `proxy_switch_marker`
+  并生成 `RCP-` 开头的切换回执，反封锁模块据此消费计划。
+
+主要接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/anti-block/{id}/trigger-block` | 封锁触发，仅标记需要切换 |
+| POST | `/api/proxy-switch/parse-block` | 解析封锁事件（只读，不落库） |
+| POST | `/api/proxy-switch/plans` | 生成带流程归属的切换计划 |
+| GET | `/api/proxy-switch/plans` | 按流程/节点/地域/状态查计划 |
+| POST | `/api/proxy-switch/plans/{id}/confirm` | 所属流程确认，出回执并更新策略 |
+| POST | `/api/proxy-switch/plans/{id}/revoke` | 所属流程撤销，释放节点占用 |
+| GET | `/api/proxy-switch/nodes` | 节点归属占用视图（跨流程只读） |
+| GET | `/api/proxy-switch/receipts` | 切换回执查询 |
+| POST | `/api/processing-snake/import` | 处理项导入（重复导入只认第一条） |
+| GET | `/api/processing-snake/records|chain|todos` | 处理项蛇只读查询 |
+| GET | `/api/processing-snake/reconcile` | 业务记录与结果明细对账 |
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
